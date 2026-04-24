@@ -4,7 +4,7 @@ API 测试脚本
 import requests
 import json
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:8888"
 
 def test_send_message():
     """测试发送消息"""
@@ -52,7 +52,7 @@ def test_monitor_list():
     response = requests.post(
         f"{BASE_URL}/api/monitor/set",
         json={
-            "friends": ["张三", "李四", "王五"]
+            "friends": ["佳霖"]
         }
     )
     print(f"设置监听列表: {response.json()}")

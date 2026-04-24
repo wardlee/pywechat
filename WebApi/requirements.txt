@@ -1,3 +1,13 @@
 fastapi==0.104.1
 uvicorn==0.24.0
 pydantic==2.5.0
+
+# pyweixin 依赖
+psutil>=5.9.5
+pyautogui>=0.9.54
+pycaw>=20240210
+pywin32>=308
+pywin32-ctypes>=0.2.2
+pywinauto>=0.6.8
+pillow>=10.4.0
+emoji>=2.14.1

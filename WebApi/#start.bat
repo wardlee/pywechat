@@ -18,8 +18,8 @@ echo 请确保微信已启动并登录！
 echo.
 
 echo [3/3] 启动服务...
-echo 服务地址: http://localhost:8000
-echo API 文档: http://localhost:8000/docs
+echo 服务地址: http://localhost:8888
+echo API 文档: http://localhost:8888/docs
 echo.
 echo 按 Ctrl+C 停止服务
 echo ========================================

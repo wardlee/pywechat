@@ -2,6 +2,14 @@
 PyWeixin Web API 主程序
 只负责 API 路由和请求处理
 """
+import sys
+import os
+from pathlib import Path
+
+# 添加项目根目录到 Python 路径，以便导入 pyweixin 模块
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import threading
 from typing import Union, List
 from fastapi import FastAPI, HTTPException
@@ -124,4 +132,5 @@ if __name__ == "__main__":
     print("=" * 50)
     print("PyWeixin Web API 启动中...")
     print("=" * 50)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # 使用 8888 端口，避免 Windows 保留端口冲突
+    uvicorn.run(app, host="0.0.0.0", port=8888)
