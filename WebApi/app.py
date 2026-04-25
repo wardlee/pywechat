@@ -49,7 +49,7 @@ async def startup_event():
     # 启动监听服务
     global monitor_service
     monitor_service = MonitorService(db)
-    threading.Thread(target=monitor_service.start, daemon=True).start()
+    threading.Thread(target=monitor_service.start_monitoring, daemon=True).start()
     print("✓ 监听服务已启动")
 
 
@@ -108,13 +108,13 @@ async def get_monitor_list():
 async def set_monitor_list(request: SetMonitorRequest):
     """设置监听人列表"""
     try:
-        # 更新监听列表
+        # 更新监听列表到数据库
         wechat_service.set_monitor_list(request.friends)
         
-        # 重启监听服务
+        # 重启监听服务（会自动从数据库加载新列表）
         global monitor_service
         if monitor_service:
-            monitor_service.restart()
+            threading.Thread(target=monitor_service.start_monitoring, daemon=True).start()
         
         return {
             "code": 200,
