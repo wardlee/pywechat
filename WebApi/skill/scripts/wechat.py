@@ -4,7 +4,7 @@ import requests
 import sys
 import json
 
-API_BASE_URL = "http://localhost:8888"
+API_BASE_URL = "http://localhost:5200"
 
 
 def getNewData(userName=""):

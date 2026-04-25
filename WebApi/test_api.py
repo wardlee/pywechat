@@ -4,7 +4,7 @@ API 测试脚本
 import requests
 import json
 
-BASE_URL = "http://localhost:8888"
+BASE_URL = "http://localhost:5200"
 
 def test_send_message():
     """测试发送消息"""

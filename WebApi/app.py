@@ -132,5 +132,5 @@ if __name__ == "__main__":
     print("=" * 50)
     print("PyWeixin Web API 启动中...")
     print("=" * 50)
-    # 使用 8888 端口，避免 Windows 保留端口冲突
-    uvicorn.run(app, host="0.0.0.0", port=8888)
+    # 使用 5200 端口，避免 Windows 保留端口冲突
+    uvicorn.run(app, host="0.0.0.0", port=5200)
