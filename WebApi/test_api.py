@@ -14,7 +14,7 @@ def test_send_message():
     response = requests.post(
         f"{BASE_URL}/api/message/send",
         json={
-            "friend_name": "张三",
+            "friend_name": "佳霖",
             "messages": "你好"
         }
     )
@@ -24,8 +24,8 @@ def test_send_message():
     response = requests.post(
         f"{BASE_URL}/api/message/send",
         json={
-            "friend_name": "张三",
-            "messages": ["你好", "在吗", "有空吗"]
+            "friend_name": "佳霖",
+            "messages": ["我没事", "我能有啥事啊", "就问下"]
         }
     )
     print(f"多条消息: {response.json()}")
@@ -40,8 +40,8 @@ def test_get_latest():
     print(f"所有未读: {json.dumps(response.json(), ensure_ascii=False, indent=2)}")
     
     # 获取指定好友的未读消息
-    response = requests.get(f"{BASE_URL}/api/message/latest?friend_name=张三")
-    print(f"张三的未读: {json.dumps(response.json(), ensure_ascii=False, indent=2)}")
+    response = requests.get(f"{BASE_URL}/api/message/latest?friend_name=佳霖")
+    print(f"佳霖的未读: {json.dumps(response.json(), ensure_ascii=False, indent=2)}")
 
 
 def test_monitor_list():
@@ -57,29 +57,26 @@ def test_monitor_list():
     )
     print(f"设置监听列表: {response.json()}")
     
+def get_monitor_list():    
     # 获取监听列表
     response = requests.get(f"{BASE_URL}/api/monitor/list")
     print(f"当前监听列表: {response.json()}")
 
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("PyWeixin API 测试")
-    print("=" * 50)
-    
     try:
         # 测试根路径
         response = requests.get(BASE_URL)
         print(f"\n服务状态: {response.json()}")
         
-        # 运行测试
-        test_monitor_list()
-        test_send_message()
+        # 设置监听列表
+        # test_monitor_list()
+        # 获取监听列表
+        get_monitor_list()
+        # test_send_message()
         test_get_latest()
         
-        print("\n" + "=" * 50)
         print("✓ 所有测试完成")
-        print("=" * 50)
         
     except requests.exceptions.ConnectionError:
         print("\n✗ 无法连接到服务，请先启动 API 服务")
