@@ -39,9 +39,16 @@ class Database:
                     sent_messages TEXT,
                     is_read INTEGER DEFAULT 0,
                     received_time TEXT,
+                    sent_time TEXT,
                     remark TEXT
                 )
             """)
+            
+            # 检查并添加 sent_time 列（用于已存在的数据库）
+            cursor.execute("PRAGMA table_info(chat_messages)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if 'sent_time' not in columns:
+                cursor.execute("ALTER TABLE chat_messages ADD COLUMN sent_time TEXT")
             
             conn.commit()
     
@@ -51,6 +58,7 @@ class Database:
         """保存发送的消息"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
             # 查询是否已有该好友的未读记录
             cursor.execute(
@@ -67,14 +75,14 @@ class Database:
                 existing = row['sent_messages'] or ""
                 updated = f"{existing} ; {new_messages}" if existing else new_messages
                 cursor.execute(
-                    "UPDATE chat_messages SET sent_messages = ? WHERE id = ?",
-                    (updated, row['id'])
+                    "UPDATE chat_messages SET sent_messages = ?, sent_time = ? WHERE id = ?",
+                    (updated, current_time, row['id'])
                 )
             else:
                 # 创建新记录
                 cursor.execute(
-                    "INSERT INTO chat_messages (friend_name, sent_messages) VALUES (?, ?)",
-                    (friend_name, new_messages)
+                    "INSERT INTO chat_messages (friend_name, sent_messages, sent_time) VALUES (?, ?, ?)",
+                    (friend_name, new_messages, current_time)
                 )
             
             conn.commit()
@@ -175,7 +183,7 @@ class Database:
             
             cursor.execute(
                 """
-                SELECT friend_name, received_messages, sent_messages, received_time 
+                SELECT friend_name, received_messages, sent_messages, received_time, is_read 
                 FROM chat_messages 
                 WHERE friend_name = ? 
                 ORDER BY id DESC 
@@ -193,7 +201,8 @@ class Database:
                     "friend_name": row['friend_name'],
                     "received_messages": row['received_messages'],
                     "sent_messages": row['sent_messages'],
-                    "received_time": row['received_time']
+                    "received_time": row['received_time'],
+                    "is_read": row['is_read']
                 })
             
             return result

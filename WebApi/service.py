@@ -60,6 +60,7 @@ class WeChatService:
             received_time = record.get('received_time', '')
             received_msgs = record.get('received_messages', '')
             sent_msgs = record.get('sent_messages', '')
+            is_read = record.get('is_read', 1)  # 默认已读
             
             # 提取日期部分（格式：2025-12-03 17:13:45 -> 12月03日 17:13）
             time_str = ""
@@ -72,7 +73,11 @@ class WeChatService:
             
             # 处理接收的消息（好友发送的）
             if received_msgs:
-                lines.append(f"[{time_str}][{friend_name}]： {received_msgs}")
+                # 如果未读，添加[未读,待回复]标记
+                if is_read == 0:
+                    lines.append(f"[{time_str}][未读,待回复][{friend_name}]： {received_msgs}")
+                else:
+                    lines.append(f"[{time_str}][{friend_name}]： {received_msgs}")
             
             # 处理发送的消息（我发送的）
             if sent_msgs:
@@ -129,6 +134,10 @@ class MonitorService:
                     active_friends.append(friend_name)
         
         return active_friends
+    
+    def get_monitor_list(self) -> List[str]:
+        """获取当前内存中的监听列表（公开方法供外部调用）"""
+        return self.monitor_list.copy()  # 返回副本，避免外部修改
     
     def _handle_first_monitor(self, friend_name: str):
         """处理首次监听逻辑"""
