@@ -138,7 +138,8 @@ class MonitorService:
             print("✗ 微信未运行，请先启动微信")
             return
         
-        # 停止旧的监听（如果有）
+        # 如果是首次启动且有旧资源，先清理
+        # 注意：重启场景下，_monitor_config_changes 已经清理过了
         if self.is_running or self.dialog_windows or self.executor:
             print("检测到旧的监听服务，先进行清理...")
             self._cleanup()
@@ -204,12 +205,42 @@ class MonitorService:
                         print(f"监听列表已变化: {self.monitor_list} -> {new_monitor_list}")
                         print("正在重启监听服务...")
                         
-                        # 先完全停止当前服务
-                        self._cleanup()
+                        # 设置停止标志
+                        self.is_running = False
+                        
+                        # 关闭所有对话窗口（不等待线程池）
+                        if self.dialog_windows:
+                            print(f"正在关闭 {len(self.dialog_windows)} 个对话窗口...")
+                            for item in self.dialog_windows:
+                                try:
+                                    if isinstance(item, tuple):
+                                        window, friend_name = item
+                                        print(f"  关闭 {friend_name} 的窗口...")
+                                    else:
+                                        window = item
+                                    
+                                    if window and hasattr(window, 'close'):
+                                        window.close()
+                                except Exception as e:
+                                    print(f"  关闭窗口时出错: {e}")
+                            
+                            self.dialog_windows.clear()
+                            print("✓ 所有窗口已关闭")
+                        
+                        # 等待其他监听线程退出
+                        print("等待监听线程退出...")
+                        time.sleep(2)
+                        
+                        # 停止线程池（不等待，因为当前线程也在其中）
+                        if self.executor:
+                            self.executor.shutdown(wait=False)
+                            self.executor = None
+                            print("✓ 线程池已停止")
+                        
                         print("✓ 旧监听服务已停止")
                         
                         # 等待一下确保资源释放
-                        time.sleep(2)
+                        time.sleep(1)
                         
                         # 重新启动监听服务
                         self.start_monitoring()
@@ -247,6 +278,10 @@ class MonitorService:
                     # 检查是否是新消息
                     if runtime_id != last_message_id:
                         content = new_message.window_text()
+
+                        # 过滤 与聊天无关的 关键字
+                        if content in ["语音通话通话时长","视频通话通话时长"] or content.strip() == "视频通话已取消" or content.strip() == "语音通话已取消"or content.strip() == "图片"or content.strip() == "动画表情" :
+                            continue
                         
                         # 临时恢复窗口以进行判断
                         dialog_window.restore()
@@ -278,21 +313,11 @@ class MonitorService:
                     break
     
     def _cleanup(self):
-        """清理资源"""
+        """清理资源（用于正常关闭，非重启场景）"""
         print("开始清理监听资源...")
         
         # 先设置停止标志，让所有线程退出循环
         self.is_running = False
-        
-        # 等待线程退出
-        time.sleep(1)
-        
-        # 停止线程池
-        if self.executor:
-            print("正在停止线程池...")
-            self.executor.shutdown(wait=True)  # 等待所有线程完成
-            self.executor = None
-            print("✓ 线程池已停止")
         
         # 关闭所有窗口
         if self.dialog_windows:
@@ -314,5 +339,16 @@ class MonitorService:
             
             self.dialog_windows.clear()
             print("✓ 所有窗口已关闭")
+        
+        # 等待线程退出
+        print("等待线程退出...")
+        time.sleep(2)
+        
+        # 停止线程池
+        if self.executor:
+            print("正在停止线程池...")
+            self.executor.shutdown(wait=False)  # 不等待，避免死锁
+            self.executor = None
+            print("✓ 线程池已停止")
         
         print("✓ 资源清理完成")
