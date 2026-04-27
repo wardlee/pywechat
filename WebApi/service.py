@@ -39,43 +39,9 @@ class WeChatService:
         
         return messages
     
-    def get_chat_history(self, friend_name: str, limit: int = 20) -> str:
-        """获取聊天历史记录，格式化为可读文本"""
-        records = self.db.get_chat_history(friend_name, limit)
-        
-        if not records:
-            return f"暂无与 {friend_name} 的聊天记录"
-        
-        # 格式化消息
-        formatted_messages = []
-        
-        for record in reversed(records):  # 反转顺序，从旧到新
-            time_str = record['received_time'] or ""
-            
-            # 格式化时间：2024-01-15 10:30:00 -> 24年01月15日 10:30
-            if time_str:
-                try:
-                    from datetime import datetime
-                    dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-                    time_str = dt.strftime("%y年%m月%d日 %H:%M")
-                except:
-                    pass
-            
-            # 处理接收的消息
-            if record['received_messages']:
-                messages = record['received_messages'].split(';')
-                for msg in messages:
-                    if msg.strip():
-                        formatted_messages.append(f"[{time_str}][{friend_name}]: {msg.strip()}")
-            
-            # 处理发送的消息
-            if record['sent_messages']:
-                messages = record['sent_messages'].split(';')
-                for msg in messages:
-                    if msg.strip():
-                        formatted_messages.append(f"[{time_str}][我]: {msg.strip()}")
-        
-        return "....".join(formatted_messages)
+    def get_chat_history(self, friend_name: str, limit: int = 20) -> List[Dict]:
+        """获取聊天历史记录"""
+        return self.db.get_chat_history(friend_name, limit)
 
 
 class MonitorService:
