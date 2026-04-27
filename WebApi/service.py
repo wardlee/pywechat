@@ -103,6 +103,7 @@ class MonitorService:
         """监听单个好友的消息（保存自己和好友的所有消息）"""
         from pyweixin import Tools
         from pyweixin.Uielements import Lists
+        import win32gui, win32con
         
         Lists_instance = Lists()
         last_message_id = 0
@@ -120,9 +121,16 @@ class MonitorService:
                     
                     # 检查是否是新消息
                     if runtime_id != last_message_id:
+                        content = new_message.window_text()
+                        
+                        # 临时恢复窗口以进行判断
+                        dialog_window.restore()
+                        
                         # 判断消息是谁发的
                         is_mine = Tools.is_my_bubble(dialog_window, new_message)
-                        content = new_message.window_text()
+                        
+                        # 判断完成后立即最小化
+                        win32gui.SendMessage(dialog_window.handle, win32con.WM_SYSCOMMAND, win32con.SC_MINIMIZE, 0)
                         
                         if is_mine:
                             # 自己发送的消息
