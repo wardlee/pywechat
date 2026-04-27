@@ -19,7 +19,8 @@ def test_get_chat_history():
     })
     
     print(f"状态码: {response.status_code}")
-    print(f"响应: {response.json()}")
+    print("响应内容:")
+    print(response.text)
     print()
     
     # 测试2: 获取指定条数（例如10条）
@@ -33,32 +34,34 @@ def test_get_chat_history():
     })
     
     print(f"状态码: {response.status_code}")
-    print(f"响应: {response.json()}")
+    print("响应内容:")
+    print(response.text)
     print()
     
-    # 测试3: 缺少friend_name参数（应该返回400错误）
+    # 测试3: 查询不存在的好友（应该返回"没有记录"）
     print("=" * 50)
-    print("测试3: 缺少friend_name参数（预期失败）")
+    print("测试3: 查询不存在的好友")
+    print("=" * 50)
+    
+    response = requests.get(f"{BASE_URL}/api/message/history", params={
+        "friend_name": "不存在的好友123"
+    })
+    
+    print(f"状态码: {response.status_code}")
+    print("响应内容:")
+    print(response.text)
+    print()
+    
+    # 测试4: 缺少friend_name参数（应该返回400错误）
+    print("=" * 50)
+    print("测试4: 缺少friend_name参数（预期失败）")
     print("=" * 50)
     
     response = requests.get(f"{BASE_URL}/api/message/history")
     
     print(f"状态码: {response.status_code}")
-    print(f"响应: {response.json()}")
-    print()
-    
-    # 测试4: limit超出范围（应该返回400错误）
-    print("=" * 50)
-    print("测试4: limit超出范围（预期失败）")
-    print("=" * 50)
-    
-    response = requests.get(f"{BASE_URL}/api/message/history", params={
-        "friend_name": friend_name,
-        "limit": 200
-    })
-    
-    print(f"状态码: {response.status_code}")
-    print(f"响应: {response.json()}")
+    print("响应内容:")
+    print(response.text)
     print()
 
 

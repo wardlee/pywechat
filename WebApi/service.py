@@ -39,9 +39,46 @@ class WeChatService:
         
         return messages
     
-    def get_chat_history(self, friend_name: str, limit: int = 20) -> List[Dict]:
-        """获取聊天历史记录"""
-        return self.db.get_chat_history(friend_name, limit)
+    def get_chat_history(self, friend_name: str, limit: int = 20) -> str:
+        """获取聊天历史记录，返回格式化的文本"""
+        from datetime import datetime
+        
+        records = self.db.get_chat_history(friend_name, limit)
+        
+        if not records:
+            return "没有记录"
+        
+        # 构建返回文本
+        current_time = datetime.now().strftime("%y年%m月%d日 %H:%M")
+        lines = [
+            f"当前时间： {current_time}",
+            ""
+        ]
+        
+        # 按时间倒序处理记录（最新的在下面）
+        for record in reversed(records):
+            received_time = record.get('received_time', '')
+            received_msgs = record.get('received_messages', '')
+            sent_msgs = record.get('sent_messages', '')
+            
+            # 提取日期部分（格式：2025-12-03 17:13:45 -> 12月03日 17:13）
+            time_str = ""
+            if received_time:
+                try:
+                    dt = datetime.strptime(received_time, "%Y-%m-%d %H:%M:%S")
+                    time_str = dt.strftime("%m月%d日 %H:%M")
+                except:
+                    time_str = received_time
+            
+            # 处理接收的消息（好友发送的）
+            if received_msgs:
+                lines.append(f"[{time_str}][{friend_name}]： {received_msgs}")
+            
+            # 处理发送的消息（我发送的）
+            if sent_msgs:
+                lines.append(f"[{time_str}][我]： {sent_msgs}")
+        
+        return "\n".join(lines)
 
 
 class MonitorService:
