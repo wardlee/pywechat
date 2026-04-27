@@ -60,12 +60,12 @@ class Database:
             row = cursor.fetchone()
             
             # 合并消息
-            new_messages = ";".join(messages)
+            new_messages = " ; ".join(messages)
             
             if row:
                 # 追加到现有记录
                 existing = row['sent_messages'] or ""
-                updated = f"{existing};{new_messages}" if existing else new_messages
+                updated = f"{existing} ; {new_messages}" if existing else new_messages
                 cursor.execute(
                     "UPDATE chat_messages SET sent_messages = ? WHERE id = ?",
                     (updated, row['id'])
@@ -95,7 +95,7 @@ class Database:
             if row:
                 # 追加到现有记录
                 existing = row['received_messages'] or ""
-                updated = f"{existing};{message}" if existing else message
+                updated = f"{existing} ; {message}" if existing else message
                 cursor.execute(
                     """
                     UPDATE chat_messages 
@@ -167,5 +167,35 @@ class Database:
                 cursor.execute("UPDATE chat_messages SET is_read = 1 WHERE is_read = 0")
             
             conn.commit()
+    
+    def get_chat_history(self, friend_name: str, limit: int = 20) -> List[Dict]:
+        """获取聊天历史记录"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                """
+                SELECT friend_name, received_messages, sent_messages, received_time 
+                FROM chat_messages 
+                WHERE friend_name = ? 
+                ORDER BY id DESC 
+                LIMIT ?
+                """,
+                (friend_name, limit)
+            )
+            
+            rows = cursor.fetchall()
+            
+            # 转换为字典列表
+            result = []
+            for row in rows:
+                result.append({
+                    "friend_name": row['friend_name'],
+                    "received_messages": row['received_messages'],
+                    "sent_messages": row['sent_messages'],
+                    "received_time": row['received_time']
+                })
+            
+            return result
     
 

@@ -95,6 +95,30 @@ async def get_latest_messages(friend_name: str = None):
     return wechat_service.get_latest_messages(friend_name)
 
 
+@app.get("/api/message/history")
+async def get_chat_history(friend_name: str, limit: int = 20):
+    """
+    获取聊天历史记录
+    参数：
+    - friend_name: 好友名称（必填）
+    - limit: 获取记录条数，默认20条
+    """
+    if not friend_name:
+        raise HTTPException(status_code=400, detail="friend_name 参数不能为空")
+    
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="limit 参数范围为 1-100")
+    
+    history = wechat_service.get_chat_history(friend_name, limit)
+    
+    return {
+        "code": 200,
+        "friend_name": friend_name,
+        "count": len(history),
+        "data": history
+    }
+
+
 # ==================== 启动服务 ====================
 
 if __name__ == "__main__":

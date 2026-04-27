@@ -38,6 +38,44 @@ class WeChatService:
             self.db.mark_as_read(friend_name)
         
         return messages
+    
+    def get_chat_history(self, friend_name: str, limit: int = 20) -> str:
+        """获取聊天历史记录，格式化为可读文本"""
+        records = self.db.get_chat_history(friend_name, limit)
+        
+        if not records:
+            return f"暂无与 {friend_name} 的聊天记录"
+        
+        # 格式化消息
+        formatted_messages = []
+        
+        for record in reversed(records):  # 反转顺序，从旧到新
+            time_str = record['received_time'] or ""
+            
+            # 格式化时间：2024-01-15 10:30:00 -> 24年01月15日 10:30
+            if time_str:
+                try:
+                    from datetime import datetime
+                    dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+                    time_str = dt.strftime("%y年%m月%d日 %H:%M")
+                except:
+                    pass
+            
+            # 处理接收的消息
+            if record['received_messages']:
+                messages = record['received_messages'].split(';')
+                for msg in messages:
+                    if msg.strip():
+                        formatted_messages.append(f"[{time_str}][{friend_name}]: {msg.strip()}")
+            
+            # 处理发送的消息
+            if record['sent_messages']:
+                messages = record['sent_messages'].split(';')
+                for msg in messages:
+                    if msg.strip():
+                        formatted_messages.append(f"[{time_str}][我]: {msg.strip()}")
+        
+        return "....".join(formatted_messages)
 
 
 class MonitorService:
@@ -262,7 +300,7 @@ class MonitorService:
         import win32gui, win32con
         
         Lists_instance = Lists()
-        last_message_id = 0
+        last_message_id = None  # 初始化为 None，表示首次启动
         
         print(f"✓ 开始监听: {friend_name}")
         
@@ -274,6 +312,12 @@ class MonitorService:
                 if chatList.children(control_type='ListItem'):
                     new_message = chatList.children(control_type='ListItem')[-1]
                     runtime_id = new_message.element_info.runtime_id
+                    
+                    # 首次启动：只记录 ID，不保存消息
+                    if last_message_id is None:
+                        last_message_id = runtime_id
+                        print(f"[{friend_name}] 初始化完成，开始监听新消息")
+                        continue
                     
                     # 检查是否是新消息
                     if runtime_id != last_message_id:
