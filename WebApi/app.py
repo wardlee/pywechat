@@ -35,10 +35,6 @@ class SendMessageRequest(BaseModel):
     messages: Union[str, List[str]]
 
 
-class SetMonitorRequest(BaseModel):
-    friends: List[str]
-
-
 # ==================== API 接口 ====================
 
 @app.on_event("startup")
@@ -46,11 +42,12 @@ async def startup_event():
     """应用启动时初始化"""
     print("✓ 数据库初始化完成")
     
-    # 启动监听服务
+    # 启动监听服务（传入配置文件路径）
     global monitor_service
-    monitor_service = MonitorService(db)
+    config_path = os.path.join(os.path.dirname(__file__), "data_config.json")
+    monitor_service = MonitorService(db, config_path)
     threading.Thread(target=monitor_service.start_monitoring, daemon=True).start()
-    print("✓ 监听服务已启动")
+    print("✓ 监听服务已启动（基于 JSON 配置）")
 
 
 @app.get("/")
@@ -98,33 +95,6 @@ async def get_latest_messages(friend_name: str = None):
     return wechat_service.get_latest_messages(friend_name)
 
 
-@app.get("/api/monitor/list")
-async def get_monitor_list():
-    """获取监听人列表"""
-    return wechat_service.get_monitor_list()
-
-
-@app.post("/api/monitor/set")
-async def set_monitor_list(request: SetMonitorRequest):
-    """设置监听人列表"""
-    try:
-        # 更新监听列表到数据库
-        wechat_service.set_monitor_list(request.friends)
-        
-        # 重启监听服务（会自动从数据库加载新列表）
-        global monitor_service
-        if monitor_service:
-            threading.Thread(target=monitor_service.start_monitoring, daemon=True).start()
-        
-        return {
-            "code": 200,
-            "message": "监听列表设置成功"
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"设置失败: {str(e)}")
-
-
 # ==================== 启动服务 ====================
 
 if __name__ == "__main__":
@@ -134,3 +104,4 @@ if __name__ == "__main__":
     print("=" * 50)
     # 使用 5200 端口，避免 Windows 保留端口冲突
     uvicorn.run(app, host="0.0.0.0", port=5200)
+

@@ -74,7 +74,7 @@ if __name__ == "__main__":
         # 获取监听列表
         # get_monitor_list()
         # test_send_message()
-        test_get_latest()
+        # test_get_latest()
         
         print("✓ 所有测试完成")
         

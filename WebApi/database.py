@@ -43,19 +43,6 @@ class Database:
                 )
             """)
             
-            # 创建监听人列表表
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS monitor_list (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    friend TEXT
-                )
-            """)
-            
-            # 检查是否有监听列表记录，没有则插入空记录
-            cursor.execute("SELECT COUNT(*) FROM monitor_list")
-            if cursor.fetchone()[0] == 0:
-                cursor.execute("INSERT INTO monitor_list (friend) VALUES ('')")
-            
             conn.commit()
     
     # ==================== 消息相关 ====================
@@ -181,25 +168,4 @@ class Database:
             
             conn.commit()
     
-    # ==================== 监听列表相关 ====================
-    
-    def get_monitor_list(self) -> List[str]:
-        """获取监听人列表"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT friend FROM monitor_list LIMIT 1")
-            row = cursor.fetchone()
-            
-            if row and row['friend']:
-                friends = row['friend'].split(';')
-                return [f.strip() for f in friends if f.strip()]
-            return []
-    
-    def set_monitor_list(self, friends: List[str]):
-        """设置监听人列表"""
-        friends_str = ";".join(friends)
-        
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE monitor_list SET friend = ? WHERE id = 1", (friends_str,))
-            conn.commit()
+
