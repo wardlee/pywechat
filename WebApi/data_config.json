@@ -1,0 +1,17 @@
+[
+    {
+        "monitor_friend_name": "佳霖",
+        "is_monitoring": true,
+        "is_first_monitor": false
+    },
+    {
+        "monitor_friend_name": "黄坤容",
+        "is_monitoring": false,
+        "is_first_monitor": false
+    },
+    {
+        "monitor_friend_name": "PY杨梅",
+        "is_monitoring": false,
+        "is_first_monitor": false
+    }
+]
