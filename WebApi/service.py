@@ -6,7 +6,7 @@ import time
 import json
 import os
 import threading
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional, Set
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -115,7 +115,11 @@ class HermesAutoReplyService:
         model: str = "hermes-agent",
         history_limit: int = 10, # 历史记录数
         request_timeout: int = 600, # 超时
+        prompt_template_path: Optional[str] = None,
+        first_monitor_template_path: Optional[str] = None,
+        avatars_dir: Optional[str] = None,
     ):
+        base_dir = os.path.dirname(__file__)
         self.db = db
         self.wechat_service = wechat_service
         self.monitor_service = monitor_service
@@ -125,6 +129,10 @@ class HermesAutoReplyService:
         self.model = model
         self.history_limit = history_limit
         self.request_timeout = request_timeout
+        self.prompt_template_path = prompt_template_path or os.path.join(base_dir, "avatars", "PushAPIPrompt.md")
+        self.first_monitor_template_path = first_monitor_template_path or os.path.join(base_dir, "avatars", "FirstMonitorPrompt.md")
+        self.avatars_dir = avatars_dir or os.path.join(base_dir, "avatars")
+        self._session_init_missing_avatar_logged: Set[str] = set()
         self._stop_event = threading.Event()
         self._thread = None
 
@@ -154,13 +162,17 @@ class HermesAutoReplyService:
     def process_once(self):
         """执行一次轮询处理"""
         for friend_name in self.monitor_service.get_monitor_list():
-            self._reply_friend(friend_name)
+            config_item = self.monitor_service.get_monitor_config(friend_name)
+            session_id = self._get_session_id(config_item)
+            if not config_item or not session_id:
+                continue
 
-    def _reply_friend(self, friend_name: str):
-        session_id = self._get_session_id(friend_name)
-        if not session_id:
-            return
+            if not self._ensure_session_initialized(friend_name, config_item, session_id):
+                continue
 
+            self._reply_friend(friend_name, config_item, session_id)
+
+    def _reply_friend(self, friend_name: str, config_item: Dict[str, Any], session_id: str):
         history_text = self.wechat_service.get_chat_history(
             friend_name,
             self.history_limit,
@@ -170,22 +182,99 @@ class HermesAutoReplyService:
             return
 
         try:
-            reply_text = self._call_hermes_api(history_text, session_id)
-            self.db.mark_as_read(friend_name)
+            input_text = self._build_reply_input_text(friend_name, history_text)
+            reply_data = self._call_hermes_api(input_text, session_id)
+
+            if reply_data["need_human"]:
+                self.db.mark_as_read(friend_name)
+                print(f"⚠ Hermes 需人工处理 [{friend_name}]: {reply_data['reason']}")
+                return
+
+            if not reply_data["should_reply"]:
+                self.db.mark_as_read(friend_name)
+                print(f"✓ Hermes 判断无需回复 [{friend_name}]: {reply_data['reason']}")
+                return
+
+            reply_text = reply_data["reply_text"]
             self.wechat_service.send_message(friend_name, [reply_text])
+            self.db.mark_as_read(friend_name)
             print(f"✓ Hermes 已回复 [{friend_name}]")
         except Exception as e:
             print(f"✗ Hermes 自动回复失败 [{friend_name}]: {e}")
 
-    def _get_session_id(self, friend_name: str) -> str:
-        config = self.monitor_service._load_config_from_json()
-        for item in config:
-            if item.get("monitor_friend_name") == friend_name:
-                friend_id = item.get("id")
-                return f"VV_{friend_id}" if friend_id is not None else ""
-        return ""
+    def _get_session_id(self, config_item: Dict[str, Any]) -> str:
+        if not config_item:
+            return ""
+        friend_id = config_item.get("id")
+        return f"VV_{friend_id}" if friend_id is not None else ""
 
-    def _call_hermes_api(self, input_text: str, session_id: str) -> str:
+    def _ensure_session_initialized(self, friend_name: str, config_item: Dict[str, Any], session_id: str) -> bool:
+        if not config_item.get("is_first_monitor", False):
+            return True
+
+        avatar_background = self._load_avatar_background(friend_name)
+        if not avatar_background:
+            if friend_name not in self._session_init_missing_avatar_logged:
+                print(f"⚠ {friend_name} 首次上下文注入未找到背景文件，暂不清除 is_first_monitor")
+                self._session_init_missing_avatar_logged.add(friend_name)
+            return False
+
+        try:
+            input_text = self._build_first_monitor_input_text(friend_name, avatar_background)
+            init_result = self._call_hermes_session_init_api(input_text, session_id)
+            if init_result["initialized"]:
+                self.monitor_service.mark_first_monitor_completed(friend_name)
+                self._session_init_missing_avatar_logged.discard(friend_name)
+                print(f"✓ Hermes 已完成首次上下文注入 [{friend_name}]")
+                return True
+        except Exception as e:
+            print(f"✗ Hermes 首次上下文注入失败 [{friend_name}]: {e}")
+
+        return False
+
+    def _build_reply_input_text(self, friend_name: str, history_text: str) -> str:
+        template = self._load_prompt_template()
+        return (
+            template
+            .replace("{{friend_name}}", friend_name)
+            .replace("{{chat_history}}", history_text.strip())
+            .strip()
+        )
+
+    def _build_first_monitor_input_text(self, friend_name: str, avatar_background: str) -> str:
+        template = self._load_first_monitor_template()
+        return (
+            template
+            .replace("{{friend_name}}", friend_name)
+            .replace("{{avatar_background}}", avatar_background.strip())
+            .strip()
+        )
+
+    def _load_prompt_template(self) -> str:
+        with open(self.prompt_template_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def _load_first_monitor_template(self) -> str:
+        with open(self.first_monitor_template_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def _load_avatar_background(self, friend_name: str) -> str:
+        avatar_path = os.path.join(self.avatars_dir, f"{friend_name}.md")
+        if not os.path.exists(avatar_path):
+            return ""
+
+        with open(avatar_path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+
+    def _call_hermes_api(self, input_text: str, session_id: str) -> Dict[str, Any]:
+        text = self._call_hermes_text_api(input_text, session_id)
+        return self._parse_reply_json(text)
+
+    def _call_hermes_session_init_api(self, input_text: str, session_id: str) -> Dict[str, Any]:
+        text = self._call_hermes_text_api(input_text, session_id)
+        return self._parse_session_init_json(text)
+
+    def _call_hermes_text_api(self, input_text: str, session_id: str) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -220,6 +309,87 @@ class HermesAutoReplyService:
             raise ValueError(f"响应缺少 text: {resp_json}")
 
         return text
+
+    def _parse_session_init_json(self, text: str) -> Dict[str, Any]:
+        payload = self._parse_json_object(text)
+        initialized = payload.get("initialized")
+        friend_name = (payload.get("friend_name") or "").strip()
+        summary = (payload.get("summary") or "").strip()
+
+        if not isinstance(initialized, bool):
+            raise ValueError(f"字段 initialized 非布尔值: {payload}")
+        if not friend_name:
+            raise ValueError(f"字段 friend_name 缺失或无效: {payload}")
+        if not summary:
+            raise ValueError(f"字段 summary 缺失或无效: {payload}")
+
+        return {
+            "initialized": initialized,
+            "friend_name": friend_name,
+            "summary": summary,
+        }
+
+    def _parse_reply_json(self, text: str) -> Dict[str, Any]:
+        payload = self._parse_json_object(text)
+        if not isinstance(payload, dict):
+            raise ValueError(f"Hermes 返回的结果不是 JSON 对象: {text}")
+
+        should_reply = payload.get("should_reply")
+        need_human = payload.get("need_human")
+        reply_text = (payload.get("reply_text") or "").strip()
+        reason = (payload.get("reason") or "").strip()
+        confidence = payload.get("confidence", 0)
+
+        if not isinstance(should_reply, bool):
+            raise ValueError(f"字段 should_reply 非布尔值: {payload}")
+        if not isinstance(need_human, bool):
+            raise ValueError(f"字段 need_human 非布尔值: {payload}")
+        if not isinstance(reason, str) or not reason:
+            raise ValueError(f"字段 reason 缺失或无效: {payload}")
+        if should_reply and not reply_text:
+            raise ValueError(f"字段 reply_text 为空，无法发送消息: {payload}")
+
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = max(0.0, min(1.0, confidence))
+
+        return {
+            "should_reply": should_reply,
+            "reply_text": reply_text,
+            "need_human": need_human,
+            "reason": reason,
+            "confidence": confidence,
+        }
+
+    def _parse_json_object(self, text: str) -> Dict[str, Any]:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            if len(lines) >= 3:
+                cleaned = "\n".join(lines[1:-1]).strip()
+
+        try:
+            payload = json.loads(cleaned)
+            if isinstance(payload, dict):
+                return payload
+        except json.JSONDecodeError:
+            pass
+
+        decoder = json.JSONDecoder()
+
+        for index, char in enumerate(cleaned):
+            if char != "{":
+                continue
+
+            try:
+                payload, _ = decoder.raw_decode(cleaned[index:])
+                return payload
+            except json.JSONDecodeError:
+                continue
+
+        raise ValueError(f"无法从 Hermes 响应中提取 JSON: {text}")
 
 
 class MonitorService:
@@ -274,23 +444,29 @@ class MonitorService:
     def get_monitor_list(self) -> List[str]:
         """获取当前内存中的监听列表（公开方法供外部调用）"""
         return self.monitor_list.copy()  # 返回副本，避免外部修改
-    
-    def _handle_first_monitor(self, friend_name: str):
-        """处理首次监听逻辑"""
+
+    def get_monitor_config(self, friend_name: str) -> Optional[Dict]:
+        """获取指定好友的监听配置"""
         config = self._load_config_from_json()
-        
         for item in config:
-            if item.get('monitor_friend_name') == friend_name and item.get('is_first_monitor', False):
-                print(f"⚡ 首次监听 {friend_name}，执行特殊逻辑...")
-                
-                # TODO: 在这里添加首次监听的特殊代码逻辑
-                # 例如：发送欢迎消息、初始化数据等
-                
-                # 执行完成后，设置 is_first_monitor 为 false
-                item['is_first_monitor'] = False
-                self._save_config_to_json(config)
-                print(f"✓ {friend_name} 首次监听逻辑已执行，标记已更新")
-                break
+            if item.get("monitor_friend_name") == friend_name:
+                return item
+        return None
+
+    def mark_first_monitor_completed(self, friend_name: str):
+        """首次背景注入成功后，关闭首次监听标记"""
+        config = self._load_config_from_json()
+
+        for item in config:
+            if item.get("monitor_friend_name") != friend_name:
+                continue
+            if not item.get("is_first_monitor", False):
+                return
+
+            item["is_first_monitor"] = False
+            self._save_config_to_json(config)
+            print(f"✓ {friend_name} 首次背景注入已完成，标记已更新")
+            return
     
     def _check_config_changed(self) -> bool:
         """检查配置文件是否发生变化"""
@@ -345,9 +521,6 @@ class MonitorService:
         # 打开对话窗口 - 每个好友使用独立窗口并最小化
         for friend in self.monitor_list:
             try:
-                # 处理首次监听逻辑
-                self._handle_first_monitor(friend)
-                
                 # 使用独立窗口并最小化，避免窗口合并
                 window = Navigator.open_seperate_dialog_window(
                     friend=friend,
