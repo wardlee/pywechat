@@ -21,7 +21,7 @@ class WeChatService:
     def __init__(self, db: Database):
         self.db = db
     
-    def send_message(self, friend_name: str, messages: List[str]):
+    def send_message(self, friend_name: str, messages: List[str], save_to_db: bool = True):
         """发送消息"""
         from pyweixin import Messages
         
@@ -32,8 +32,8 @@ class WeChatService:
             close_weixin=False
         )
         
-        # 保存到数据库
-        self.db.save_sent_message(friend_name, messages)
+        if save_to_db:
+            self.db.save_sent_message(friend_name, messages)
     
     def get_latest_messages(self, friend_name: Optional[str] = None) -> List[Dict]:
         """获取最新消息并标记为已读"""
@@ -171,7 +171,7 @@ class OpenAIAutoReplyService:
 
             if reply_data["need_human"]:
                 review_message = self._build_human_review_message(friend_name, pending_messages, reply_data)
-                self.wechat_service.send_message(self.human_review_friend_name, [review_message])
+                self.wechat_service.send_message(self.human_review_friend_name, [review_message], save_to_db=False)
                 self.db.mark_as_read(friend_name)
                 print(f"⚠ OpenAI 需人工处理 [{friend_name}]: {reply_data['reason']}")
                 return

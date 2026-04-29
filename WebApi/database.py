@@ -50,6 +50,19 @@ class Database:
             columns = [column[1] for column in cursor.fetchall()]
             if 'sent_time' not in columns:
                 cursor.execute("ALTER TABLE chat_messages ADD COLUMN sent_time TEXT")
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_chat_friend_id
+                ON chat_messages(friend_name, id DESC)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_chat_friend_unread
+                ON chat_messages(friend_name, is_read, id DESC)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_chat_unread
+                ON chat_messages(is_read, id DESC)
+            """)
             
             conn.commit()
     
@@ -61,9 +74,15 @@ class Database:
             cursor = conn.cursor()
             current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # 查询是否已有该好友的未读记录
+            # 优先合并到该好友最新一条记录，避免自动回复/连续发送拆成大量行。
             cursor.execute(
-                "SELECT id, sent_messages FROM chat_messages WHERE friend_name = ? AND is_read = 0",
+                """
+                SELECT id, sent_messages
+                FROM chat_messages
+                WHERE friend_name = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
                 (friend_name,)
             )
             row = cursor.fetchone()
@@ -97,9 +116,18 @@ class Database:
             cursor = conn.cursor()
             current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # 查询是否已有未读记录
+            # 连续好友消息合并到同一条记录：
+            # 1. 优先合并未读记录；
+            # 2. 如果最新记录还没有我方回复，即使已读也继续合并。
             cursor.execute(
-                "SELECT id, received_messages FROM chat_messages WHERE friend_name = ? AND is_read = 0",
+                """
+                SELECT id, received_messages
+                FROM chat_messages
+                WHERE friend_name = ?
+                  AND (is_read = 0 OR (sent_messages IS NULL OR sent_messages = ''))
+                ORDER BY id DESC
+                LIMIT 1
+                """,
                 (friend_name,)
             )
             row = cursor.fetchone()
@@ -111,7 +139,7 @@ class Database:
                 cursor.execute(
                     """
                     UPDATE chat_messages 
-                    SET received_messages = ?, received_time = ? 
+                    SET received_messages = ?, received_time = ?, is_read = 0 
                     WHERE id = ?
                     """,
                     (updated, current_time, row['id'])
