@@ -118,6 +118,7 @@ class HermesAutoReplyService:
         prompt_template_path: Optional[str] = None,
         first_monitor_template_path: Optional[str] = None,
         avatars_dir: Optional[str] = None,
+        human_review_friend_name: str = "文件传输助手",
     ):
         base_dir = os.path.dirname(__file__)
         self.db = db
@@ -132,6 +133,7 @@ class HermesAutoReplyService:
         self.prompt_template_path = prompt_template_path or os.path.join(base_dir, "avatars", "PushAPIPrompt.md")
         self.first_monitor_template_path = first_monitor_template_path or os.path.join(base_dir, "avatars", "FirstMonitorPrompt.md")
         self.avatars_dir = avatars_dir or os.path.join(base_dir, "avatars")
+        self.human_review_friend_name = human_review_friend_name
         self._session_init_missing_avatar_logged: Set[str] = set()
         self._stop_event = threading.Event()
         self._thread = None
@@ -186,6 +188,8 @@ class HermesAutoReplyService:
             reply_data = self._call_hermes_api(input_text, session_id)
 
             if reply_data["need_human"]:
+                review_message = self._build_human_review_message(friend_name, history_text, reply_data)
+                self.wechat_service.send_message(self.human_review_friend_name, [review_message])
                 self.db.mark_as_read(friend_name)
                 print(f"⚠ Hermes 需人工处理 [{friend_name}]: {reply_data['reason']}")
                 return
@@ -250,6 +254,24 @@ class HermesAutoReplyService:
             .strip()
         )
 
+    def _build_human_review_message(self, friend_name: str, history_text: str, reply_data: Dict[str, Any]) -> str:
+        pending_messages = self._extract_pending_messages(history_text)
+        suggested_reply = reply_data.get("suggested_reply") or "（Hermes 未提供建议回复）"
+
+        return f"{friend_name}消息: {pending_messages}   建议回复:\n{suggested_reply}"
+
+    def _extract_pending_messages(self, history_text: str) -> str:
+        pending_messages = []
+
+        for line in history_text.splitlines():
+            if "[未读,待回复]" not in line:
+                continue
+
+            _, separator, message = line.partition("：")
+            pending_messages.append((message if separator else line).strip())
+
+        return "\n".join(pending_messages) if pending_messages else "（未能提取未读消息，请查看聊天记录）"
+
     def _load_prompt_template(self) -> str:
         with open(self.prompt_template_path, "r", encoding="utf-8") as f:
             return f.read()
@@ -275,6 +297,10 @@ class HermesAutoReplyService:
         return self._parse_session_init_json(text)
 
     def _call_hermes_text_api(self, input_text: str, session_id: str) -> str:
+        print("\n========== Hermes Input ==========")
+        print(input_text)
+        print("========== End Hermes Input ==========\n")
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -308,6 +334,10 @@ class HermesAutoReplyService:
         if not text:
             raise ValueError(f"响应缺少 text: {resp_json}")
 
+        print("\n========== Hermes Output ==========")
+        print(text)
+        print("========== End Hermes Output ==========\n")
+
         return text
 
     def _parse_session_init_json(self, text: str) -> Dict[str, Any]:
@@ -337,6 +367,7 @@ class HermesAutoReplyService:
         should_reply = payload.get("should_reply")
         need_human = payload.get("need_human")
         reply_text = (payload.get("reply_text") or "").strip()
+        suggested_reply = (payload.get("suggested_reply") or "").strip()
         reason = (payload.get("reason") or "").strip()
         confidence = payload.get("confidence", 0)
 
@@ -346,6 +377,14 @@ class HermesAutoReplyService:
             raise ValueError(f"字段 need_human 非布尔值: {payload}")
         if not isinstance(reason, str) or not reason:
             raise ValueError(f"字段 reason 缺失或无效: {payload}")
+
+        if need_human:
+            should_reply = False
+            suggested_reply = suggested_reply or reply_text
+            reply_text = ""
+
+        if need_human and not suggested_reply:
+            suggested_reply = "（Hermes 未提供建议回复，请查看原消息后手动回复）"
         if should_reply and not reply_text:
             raise ValueError(f"字段 reply_text 为空，无法发送消息: {payload}")
 
@@ -359,6 +398,7 @@ class HermesAutoReplyService:
             "should_reply": should_reply,
             "reply_text": reply_text,
             "need_human": need_human,
+            "suggested_reply": suggested_reply,
             "reason": reason,
             "confidence": confidence,
         }

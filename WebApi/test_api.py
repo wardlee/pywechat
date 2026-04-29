@@ -14,7 +14,7 @@ def test_send_message():
     response = requests.post(
         f"{BASE_URL}/api/message/send",
         json={
-            "friend_name": "佳霖",
+            "friend_name": "文件传输助手",
             "messages": "你好"
         }
     )
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         # test_monitor_list()
         # 获取监听列表
         # get_monitor_list()
-        # test_send_message()
+        test_send_message()
         # test_get_latest()
         
         print("✓ 所有测试完成")
