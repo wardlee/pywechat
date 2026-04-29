@@ -7,29 +7,25 @@ import json
 API_BASE_URL = "http://localhost:5200"
 
 
-def getNewData(userName=""):
-    """获取新消息"""
+def getHistoryData(userName, limit=20):
+    """获取历史消息"""
     try:
-        url = f"{API_BASE_URL}/api/message/latest"
-        params = {"friend_name": userName} if userName else {}
+        url = f"{API_BASE_URL}/api/message/history"
+        params = {
+            "friend_name": userName,
+            "limit": limit,
+        }
         
         response = requests.get(url, params=params)
         response.raise_for_status()
         
-        messages = response.json()
-        
-        # 格式化输出
-        if messages:
-            for msg in messages:
-                print(f"[{msg['friend_name']}] {msg['content']} ({msg['timestamp']})")
-        else:
-            print("无新消息")
-        
-        return messages
+        history_text = response.text.strip()
+        print(history_text if history_text else "没有记录")
+        return history_text
         
     except Exception as e:
-        print(f"获取消息失败: {e}")
-        return []
+        print(f"获取历史消息失败: {e}")
+        return ""
 
 
 def sendMsg(toUser, msg):
@@ -74,29 +70,10 @@ def getMonitorList():
         return []
 
 
-    """设置监听人列表"""
-    try:
-        url = f"{API_BASE_URL}/api/monitor/set"
-        data = {
-            "friends": list(friends)
-        }
-        
-        response = requests.post(url, json=data)
-        response.raise_for_status()
-        
-        if friends:
-            print(f"监听列表已更新: {', '.join(friends)}")
-        else:
-            print("监听列表已清空")
-        
-    except Exception as e:
-        print(f"设置监听列表失败: {e}")
-
-
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("用法:")
-        print("  获取新消息: python wechat.py getNewData [好友名称]")
+        print("  获取历史消息: python wechat.py getHistoryData <好友名称> [条数]")
         print("  发送消息: python wechat.py sendMsg <好友名称> <消息内容>")
         print("  获取监听列表: python wechat.py getMonitorList")
         print("  设置监听列表: python wechat.py setMonitorList <好友1> [好友2] [好友3] ...")
@@ -104,9 +81,15 @@ if __name__ == "__main__":
     
     command = sys.argv[1]
     
-    if command == "getNewData":
-        userName = sys.argv[2] if len(sys.argv) > 2 else ""
-        getNewData(userName)
+    if command == "getHistoryData":
+        if len(sys.argv) < 3:
+            print("错误: 缺少参数")
+            print("用法: python wechat.py getHistoryData <好友名称> [条数]")
+            sys.exit(1)
+
+        userName = sys.argv[2]
+        limit = int(sys.argv[3]) if len(sys.argv) > 3 else 20
+        getHistoryData(userName, limit)
     
     elif command == "sendMsg":
         if len(sys.argv) < 4:
@@ -121,18 +104,8 @@ if __name__ == "__main__":
     elif command == "getMonitorList":
         getMonitorList()
     
-    elif command == "setMonitorList":
-        if len(sys.argv) < 3:
-            print("错误: 缺少参数")
-            print("用法: python wechat.py setMonitorList <好友1> [好友2] [好友3] ...")
-            print("提示: 不提供好友名称将清空监听列表")
-            sys.exit(1)
-        
-        friends = sys.argv[2:]
-        setMonitorList(*friends)
-    
     else:
         print(f"错误: 未知命令 '{command}'")
-        print("支持的命令: getNewData, sendMsg, getMonitorList, setMonitorList")
+        print("支持的命令: getHistoryData, sendMsg, getMonitorList, setMonitorList")
         sys.exit(1)
     
