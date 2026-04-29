@@ -6,7 +6,7 @@ import time
 import json
 import os
 import threading
-from typing import Any, List, Dict, Optional, Set
+from typing import Any, List, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -101,8 +101,8 @@ class WeChatService:
         return "\n".join(lines)
 
 
-class HermesAutoReplyService:
-    """定时轮询未读消息并调用 Hermes 自动回复"""
+class OpenAIAutoReplyService:
+    """定时轮询未读消息并调用 OpenAI-compatible API 自动回复"""
 
     def __init__(
         self,
@@ -110,13 +110,8 @@ class HermesAutoReplyService:
         wechat_service: WeChatService,
         monitor_service: "MonitorService",
         interval_seconds: int = 10, # 间隔30秒查一次最新消息
-        api_url: str = "http://172.20.19.87:8642/v1/responses",
-        api_key: str = "2cf7f73cd69db3d3961d8ad1ccd976a33e5b35bd5e9d95e4404219a1b87127fa",
-        model: str = "hermes-agent",
         history_limit: int = 10, # 历史记录数
-        request_timeout: int = 600, # 超时
-        prompt_template_path: Optional[str] = None,
-        first_monitor_template_path: Optional[str] = None,
+        request_timeout: int = 120, # 超时
         avatars_dir: Optional[str] = None,
         human_review_friend_name: str = "文件传输助手",
     ):
@@ -125,16 +120,11 @@ class HermesAutoReplyService:
         self.wechat_service = wechat_service
         self.monitor_service = monitor_service
         self.interval_seconds = interval_seconds
-        self.api_url = api_url
-        self.api_key = api_key
-        self.model = model
         self.history_limit = history_limit
         self.request_timeout = request_timeout
-        self.prompt_template_path = prompt_template_path or os.path.join(base_dir, "avatars", "PushAPIPrompt.md")
-        self.first_monitor_template_path = first_monitor_template_path or os.path.join(base_dir, "avatars", "FirstMonitorPrompt.md")
         self.avatars_dir = avatars_dir or os.path.join(base_dir, "avatars")
         self.human_review_friend_name = human_review_friend_name
-        self._session_init_missing_avatar_logged: Set[str] = set()
+        self.chat_contexts: Dict[str, List[Dict[str, str]]] = {}
         self._stop_event = threading.Event()
         self._thread = None
 
@@ -144,9 +134,9 @@ class HermesAutoReplyService:
             return
 
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="hermes-auto-reply")
+        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="openai-auto-reply")
         self._thread.start()
-        print(f"✓ Hermes 自动回复轮询已启动，间隔 {self.interval_seconds} 秒")
+        print(f"✓ OpenAI 自动回复轮询已启动，间隔 {self.interval_seconds} 秒")
 
     def stop(self):
         """停止轮询线程"""
@@ -157,7 +147,7 @@ class HermesAutoReplyService:
             try:
                 self.process_once()
             except Exception as e:
-                print(f"✗ Hermes 自动回复轮询异常: {e}")
+                print(f"✗ OpenAI 自动回复轮询异常: {e}")
 
             self._stop_event.wait(self.interval_seconds)
 
@@ -165,120 +155,93 @@ class HermesAutoReplyService:
         """执行一次轮询处理"""
         for friend_name in self.monitor_service.get_monitor_list():
             config_item = self.monitor_service.get_monitor_config(friend_name)
-            session_id = self._get_session_id(config_item)
-            if not config_item or not session_id:
+            if not config_item:
                 continue
 
-            if not self._ensure_session_initialized(friend_name, config_item, session_id):
-                continue
+            self._reply_friend(friend_name, config_item)
 
-            self._reply_friend(friend_name, config_item, session_id)
-
-    def _reply_friend(self, friend_name: str, config_item: Dict[str, Any], session_id: str):
-        history_text = self.wechat_service.get_chat_history(
-            friend_name,
-            self.history_limit,
-            require_unread=True,
-        )
-        if not history_text:
+    def _reply_friend(self, friend_name: str, config_item: Dict[str, Any]):
+        chat_context, pending_messages = self._build_chat_context(friend_name, require_unread=True)
+        if not chat_context or not pending_messages:
             return
 
         try:
-            input_text = self._build_reply_input_text(friend_name, history_text)
-            reply_data = self._call_hermes_api(input_text, session_id)
+            system_prompt = self._build_system_prompt(friend_name, config_item)
+            reply_data = self._call_openai_api(friend_name, system_prompt, chat_context)
 
             if reply_data["need_human"]:
-                review_message = self._build_human_review_message(friend_name, history_text, reply_data)
+                review_message = self._build_human_review_message(friend_name, pending_messages, reply_data)
                 self.wechat_service.send_message(self.human_review_friend_name, [review_message])
                 self.db.mark_as_read(friend_name)
-                print(f"⚠ Hermes 需人工处理 [{friend_name}]: {reply_data['reason']}")
+                print(f"⚠ OpenAI 需人工处理 [{friend_name}]: {reply_data['reason']}")
                 return
 
             if not reply_data["should_reply"]:
                 self.db.mark_as_read(friend_name)
-                print(f"✓ Hermes 判断无需回复 [{friend_name}]: {reply_data['reason']}")
+                print(f"✓ OpenAI 判断无需回复 [{friend_name}]: {reply_data['reason']}")
                 return
 
             reply_text = reply_data["reply_text"]
             self.wechat_service.send_message(friend_name, [reply_text])
             self.db.mark_as_read(friend_name)
-            print(f"✓ Hermes 已回复 [{friend_name}]")
+            print(f"✓ OpenAI 已回复 [{friend_name}]")
         except Exception as e:
-            print(f"✗ Hermes 自动回复失败 [{friend_name}]: {e}")
+            print(f"✗ OpenAI 自动回复失败 [{friend_name}]: {e}")
 
-    def _get_session_id(self, config_item: Dict[str, Any]) -> str:
-        if not config_item:
-            return ""
-        friend_id = config_item.get("id")
-        return f"VV_{friend_id}" if friend_id is not None else ""
+    def _build_chat_context(self, friend_name: str, require_unread: bool = False) -> Tuple[List[Dict[str, str]], str]:
+        records = self.db.get_chat_history(friend_name, self.history_limit)
+        if not records:
+            return [], ""
+        if require_unread and not any(record.get("is_read") == 0 for record in records):
+            return [], ""
 
-    def _ensure_session_initialized(self, friend_name: str, config_item: Dict[str, Any], session_id: str) -> bool:
-        if not config_item.get("is_first_monitor", False):
-            return True
+        entries = []
+        pending_messages = []
+        for record in reversed(records):
+            received_time = record.get("received_time") or ""
+            sent_time = record.get("sent_time") or ""
+            received_msgs = (record.get("received_messages") or "").strip()
+            sent_msgs = (record.get("sent_messages") or "").strip()
+            is_read = record.get("is_read", 1)
+
+            if received_msgs:
+                entries.append((received_time, 0, {"role": "user", "content": received_msgs}))
+                if is_read == 0:
+                    pending_messages.append(received_msgs)
+            if sent_msgs:
+                entries.append((sent_time, 1, {"role": "assistant", "content": sent_msgs}))
+
+        entries.sort(key=lambda item: (item[0], item[1]))
+        self.chat_contexts[friend_name] = [entry for _, _, entry in entries]
+        return self.chat_contexts[friend_name], "\n".join(pending_messages).strip()
+
+    def _build_system_prompt(self, friend_name: str, config_item: Dict[str, Any]) -> str:
+        avatar_name = config_item.get("Avatar") or config_item.get("avatar")
+        if not avatar_name:
+            raise ValueError(f"{friend_name} 缺少 Avatar 配置")
+
+        avatar_prompt_path = os.path.join(self.avatars_dir, f"{avatar_name}.md")
+        if not os.path.exists(avatar_prompt_path):
+            raise FileNotFoundError(f"角色文件不存在: {avatar_prompt_path}")
+
+        with open(avatar_prompt_path, "r", encoding="utf-8") as f:
+            system_prompt = f.read()
 
         avatar_background = self._load_avatar_background(friend_name)
-        if not avatar_background:
-            if friend_name not in self._session_init_missing_avatar_logged:
-                print(f"⚠ {friend_name} 首次上下文注入未找到背景文件，暂不清除 is_first_monitor")
-                self._session_init_missing_avatar_logged.add(friend_name)
-            return False
-
-        try:
-            input_text = self._build_first_monitor_input_text(friend_name, avatar_background)
-            init_result = self._call_hermes_session_init_api(input_text, session_id)
-            if init_result["initialized"]:
-                self.monitor_service.mark_first_monitor_completed(friend_name)
-                self._session_init_missing_avatar_logged.discard(friend_name)
-                print(f"✓ Hermes 已完成首次上下文注入 [{friend_name}]")
-                return True
-        except Exception as e:
-            print(f"✗ Hermes 首次上下文注入失败 [{friend_name}]: {e}")
-
-        return False
-
-    def _build_reply_input_text(self, friend_name: str, history_text: str) -> str:
-        template = self._load_prompt_template()
+        now = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
         return (
-            template
+            system_prompt
             .replace("{{friend_name}}", friend_name)
-            .replace("{{chat_history}}", history_text.strip())
+            .replace("{{avatar_background}}", avatar_background)
+            .replace("{{current_time}}", now)
+            .replace("{{chat_history}}", "")
             .strip()
         )
 
-    def _build_first_monitor_input_text(self, friend_name: str, avatar_background: str) -> str:
-        template = self._load_first_monitor_template()
-        return (
-            template
-            .replace("{{friend_name}}", friend_name)
-            .replace("{{avatar_background}}", avatar_background.strip())
-            .strip()
-        )
-
-    def _build_human_review_message(self, friend_name: str, history_text: str, reply_data: Dict[str, Any]) -> str:
-        pending_messages = self._extract_pending_messages(history_text)
-        suggested_reply = reply_data.get("suggested_reply") or "（Hermes 未提供建议回复）"
+    def _build_human_review_message(self, friend_name: str, pending_messages: str, reply_data: Dict[str, Any]) -> str:
+        suggested_reply = reply_data.get("suggested_reply") or "（AI 未提供建议回复）"
 
         return f"{friend_name}消息: {pending_messages}   建议回复:\n{suggested_reply}"
-
-    def _extract_pending_messages(self, history_text: str) -> str:
-        pending_messages = []
-
-        for line in history_text.splitlines():
-            if "[未读,待回复]" not in line:
-                continue
-
-            _, separator, message = line.partition("：")
-            pending_messages.append((message if separator else line).strip())
-
-        return "\n".join(pending_messages) if pending_messages else "（未能提取未读消息，请查看聊天记录）"
-
-    def _load_prompt_template(self) -> str:
-        with open(self.prompt_template_path, "r", encoding="utf-8") as f:
-            return f.read()
-
-    def _load_first_monitor_template(self) -> str:
-        with open(self.first_monitor_template_path, "r", encoding="utf-8") as f:
-            return f.read()
 
     def _load_avatar_background(self, friend_name: str) -> str:
         avatar_path = os.path.join(self.avatars_dir, f"{friend_name}.md")
@@ -288,81 +251,69 @@ class HermesAutoReplyService:
         with open(avatar_path, "r", encoding="utf-8") as f:
             return f.read().strip()
 
-    def _call_hermes_api(self, input_text: str, session_id: str) -> Dict[str, Any]:
-        text = self._call_hermes_text_api(input_text, session_id)
-        return self._parse_reply_json(text)
+    def _call_openai_api(self, friend_name: str, system_prompt: str, chat_context: List[Dict[str, str]]) -> Dict[str, Any]:
+        messages = [{"role": "system", "content": system_prompt}, *chat_context]
+        providers = self.monitor_service.get_openai_providers()
+        if not providers:
+            raise ValueError("data_config.json 缺少可用的 OpenAI/FallBack 配置")
 
-    def _call_hermes_session_init_api(self, input_text: str, session_id: str) -> Dict[str, Any]:
-        text = self._call_hermes_text_api(input_text, session_id)
-        return self._parse_session_init_json(text)
+        last_error = None
+        for provider in providers:
+            try:
+                text = self._call_openai_text_api(provider, messages)
+                return self._parse_reply_json(text)
+            except Exception as e:
+                last_error = e
+                print(f"✗ OpenAI 供应商请求失败 [{friend_name}][{provider['model_name']}]: {e}")
 
-    def _call_hermes_text_api(self, input_text: str, session_id: str) -> str:
-        print("\n========== Hermes Input ==========")
-        print(input_text)
-        print("========== End Hermes Input ==========\n")
+        raise RuntimeError(f"所有 OpenAI 供应商均失败: {last_error}")
 
+    def _call_openai_text_api(self, provider: Dict[str, str], messages: List[Dict[str, str]]) -> str:
+        url = self._build_chat_completions_url(provider["url"])
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {provider['key']}",
             "Content-Type": "application/json",
-            "X-Hermes-Session-Id": session_id,
         }
         payload = {
-            "model": self.model,
-            "input": input_text,
-            "conversation": session_id,
+            "model": provider["model_name"],
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 600,
         }
 
-        response = requests.post(
-            self.api_url,
-            json=payload,
-            headers=headers,
-            timeout=self.request_timeout,
-        )
+        print("\n========== OpenAI Messages ==========")
+        print(json.dumps(messages, ensure_ascii=False, indent=2))
+        print("========== End OpenAI Messages ==========\n")
+
+        response = requests.post(url, json=payload, headers=headers, timeout=self.request_timeout)
         response.raise_for_status()
-
         resp_json = response.json()
-        output = resp_json.get("output") or []
-        if not output:
-            raise ValueError(f"响应缺少 output: {resp_json}")
+        choices = resp_json.get("choices") or []
+        if not choices:
+            raise ValueError(f"响应缺少 choices: {resp_json}")
 
-        last_item = output[-1]
-        content = last_item.get("content") or []
-        if not content:
-            raise ValueError(f"响应缺少 content: {resp_json}")
-
-        text = content[0].get("text", "").strip()
+        message = choices[0].get("message") or {}
+        text = (message.get("content") or "").strip()
         if not text:
-            raise ValueError(f"响应缺少 text: {resp_json}")
+            raise ValueError(f"响应缺少 message.content: {resp_json}")
 
-        print("\n========== Hermes Output ==========")
+        print("\n========== OpenAI Output ==========")
         print(text)
-        print("========== End Hermes Output ==========\n")
-
+        print("========== End OpenAI Output ==========\n")
         return text
 
-    def _parse_session_init_json(self, text: str) -> Dict[str, Any]:
-        payload = self._parse_json_object(text)
-        initialized = payload.get("initialized")
-        friend_name = (payload.get("friend_name") or "").strip()
-        summary = (payload.get("summary") or "").strip()
-
-        if not isinstance(initialized, bool):
-            raise ValueError(f"字段 initialized 非布尔值: {payload}")
-        if not friend_name:
-            raise ValueError(f"字段 friend_name 缺失或无效: {payload}")
-        if not summary:
-            raise ValueError(f"字段 summary 缺失或无效: {payload}")
-
-        return {
-            "initialized": initialized,
-            "friend_name": friend_name,
-            "summary": summary,
-        }
+    def _build_chat_completions_url(self, base_url: str) -> str:
+        url = base_url.strip().rstrip("/")
+        if not url:
+            raise ValueError("OpenAI url 为空")
+        if url.endswith("/chat/completions"):
+            return url
+        return f"{url}/chat/completions"
 
     def _parse_reply_json(self, text: str) -> Dict[str, Any]:
         payload = self._parse_json_object(text)
         if not isinstance(payload, dict):
-            raise ValueError(f"Hermes 返回的结果不是 JSON 对象: {text}")
+            raise ValueError(f"AI 返回的结果不是 JSON 对象: {text}")
 
         should_reply = payload.get("should_reply")
         need_human = payload.get("need_human")
@@ -384,7 +335,7 @@ class HermesAutoReplyService:
             reply_text = ""
 
         if need_human and not suggested_reply:
-            suggested_reply = "（Hermes 未提供建议回复，请查看原消息后手动回复）"
+            suggested_reply = "（AI 未提供建议回复，请查看原消息后手动回复）"
         if should_reply and not reply_text:
             raise ValueError(f"字段 reply_text 为空，无法发送消息: {payload}")
 
@@ -429,7 +380,7 @@ class HermesAutoReplyService:
             except json.JSONDecodeError:
                 continue
 
-        raise ValueError(f"无法从 Hermes 响应中提取 JSON: {text}")
+        raise ValueError(f"无法从 AI 响应中提取 JSON: {text}")
 
 
 class MonitorService:
@@ -445,20 +396,54 @@ class MonitorService:
         self.last_config_mtime = 0  # 配置文件最后修改时间
         self.config_check_interval = 5  # 每5秒检查一次配置文件
     
-    def _load_config_from_json(self) -> List[Dict]:
-        """从 JSON 文件加载配置"""
+    def _load_raw_config_from_json(self) -> Any:
+        """从 JSON 文件加载原始配置"""
         try:
             if not os.path.exists(self.config_path):
                 print(f"✗ 配置文件不存在: {self.config_path}")
-                return []
+                return {}
             
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             
-            return config if isinstance(config, list) else []
+            return config
         except Exception as e:
             print(f"✗ 读取配置文件失败: {e}")
+            return {}
+
+    def _load_config_from_json(self) -> List[Dict]:
+        """从 JSON 配置中读取好友配置，兼容旧版 list 结构。"""
+        config = self._load_raw_config_from_json()
+        if isinstance(config, list):
+            return config
+        if isinstance(config, dict):
+            friends = config.get("friends", [])
+            return friends if isinstance(friends, list) else []
+        return []
+
+    def get_openai_providers(self) -> List[Dict[str, str]]:
+        """获取主 OpenAI-compatible 配置和 fallback 配置。"""
+        config = self._load_raw_config_from_json()
+        if not isinstance(config, dict):
             return []
+
+        providers = []
+        for key in ("OpenAI", "FallBack"):
+            provider = config.get(key) or {}
+            if not isinstance(provider, dict):
+                continue
+
+            url = (provider.get("url") or "").strip()
+            api_key = (provider.get("key") or "").strip()
+            model_name = (provider.get("model_name") or "").strip()
+            if url and api_key and model_name:
+                providers.append({
+                    "url": url,
+                    "key": api_key,
+                    "model_name": model_name,
+                })
+
+        return providers
     
     def _save_config_to_json(self, config: List[Dict]):
         """保存配置到 JSON 文件"""
@@ -493,21 +478,6 @@ class MonitorService:
                 return item
         return None
 
-    def mark_first_monitor_completed(self, friend_name: str):
-        """首次背景注入成功后，关闭首次监听标记"""
-        config = self._load_config_from_json()
-
-        for item in config:
-            if item.get("monitor_friend_name") != friend_name:
-                continue
-            if not item.get("is_first_monitor", False):
-                return
-
-            item["is_first_monitor"] = False
-            self._save_config_to_json(config)
-            print(f"✓ {friend_name} 首次背景注入已完成，标记已更新")
-            return
-    
     def _check_config_changed(self) -> bool:
         """检查配置文件是否发生变化"""
         try:

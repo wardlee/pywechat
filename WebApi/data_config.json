@@ -1,18 +1,29 @@
-[
-    {
-        "monitor_friend_name": "佳霖",
-        "is_monitoring": true,
-        "Avatar": "A角色"
-
+{
+    "OpenAI": {
+        "url": "https://api-inference.modelscope.cn/v1",
+        "key": "ms-c7341323-641d-4a13-ae90-6f6438f35eb8",
+        "model_name": "moonshotai/Kimi-K2.5"
     },
-    {
-        "monitor_friend_name": "黄坤容",
-        "is_monitoring": false,
-        "Avatar": "B角色"
+    "FallBack": {
+        "url": "",
+        "key": "",
+        "model_name": ""
     },
-    {
-        "monitor_friend_name": "PY杨梅",
-        "is_monitoring": false,
-        "Avatar": "B角色"
-    }
-]
+    "friends": [
+        {
+            "monitor_friend_name": "佳霖",
+            "is_monitoring": true,
+            "Avatar": "A角色"
+        },
+        {
+            "monitor_friend_name": "黄坤容",
+            "is_monitoring": false,
+            "Avatar": "B角色"
+        },
+        {
+            "monitor_friend_name": "PY杨梅",
+            "is_monitoring": false,
+            "Avatar": "B角色"
+        }
+    ]
+}
