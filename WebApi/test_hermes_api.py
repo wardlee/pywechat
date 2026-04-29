@@ -33,15 +33,12 @@ headers = {
     "Authorization": f"Bearer {api_key}",
     "Content-Type": "application/json"
 }
-# resp = requests.post(url, json=data, headers=headers)
-resp = requests.post(url, json=data, headers=headers)
 
+resp = requests.post(url, json=data, headers=headers)
 print(resp.json())
 resp_json = resp.json()
 text = resp_json["output"][-1]["content"][0]["text"]
 print(text)
-import os
-os.write
 
 
 

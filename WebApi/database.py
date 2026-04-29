@@ -3,6 +3,7 @@
 只负责数据的增删改查
 """
 import sqlite3
+from pathlib import Path
 from datetime import datetime
 from contextlib import contextmanager
 from typing import List, Dict, Optional
@@ -11,8 +12,8 @@ from typing import List, Dict, Optional
 class Database:
     """数据库操作类"""
     
-    def __init__(self, db_path: str = "wechat.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or str(Path(__file__).with_name("wechat.db"))
         self.init_db()
     
     @contextmanager
@@ -81,7 +82,10 @@ class Database:
             else:
                 # 创建新记录
                 cursor.execute(
-                    "INSERT INTO chat_messages (friend_name, sent_messages, sent_time) VALUES (?, ?, ?)",
+                    """
+                    INSERT INTO chat_messages (friend_name, sent_messages, sent_time, is_read)
+                    VALUES (?, ?, ?, 1)
+                    """,
                     (friend_name, new_messages, current_time)
                 )
             
@@ -183,7 +187,7 @@ class Database:
             
             cursor.execute(
                 """
-                SELECT friend_name, received_messages, sent_messages, received_time, is_read 
+                SELECT friend_name, received_messages, sent_messages, received_time, sent_time, is_read 
                 FROM chat_messages 
                 WHERE friend_name = ? 
                 ORDER BY id DESC 
@@ -202,6 +206,7 @@ class Database:
                     "received_messages": row['received_messages'],
                     "sent_messages": row['sent_messages'],
                     "received_time": row['received_time'],
+                    "sent_time": row['sent_time'],
                     "is_read": row['is_read']
                 })
             

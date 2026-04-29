@@ -5,8 +5,13 @@
 import time
 import json
 import os
+import threading
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
+import requests
+
 from database import Database
 
 
@@ -39,14 +44,15 @@ class WeChatService:
         
         return messages
     
-    def get_chat_history(self, friend_name: str, limit: int = 20) -> str:
+    def get_chat_history(self, friend_name: str, limit: int = 20, require_unread: bool = False) -> str:
         """获取聊天历史记录，返回格式化的文本"""
-        from datetime import datetime
-        
         records = self.db.get_chat_history(friend_name, limit)
         
         if not records:
-            return "没有记录"
+            return ""
+
+        if require_unread and not any(record.get('is_read') == 0 for record in records):
+            return ""
         
         # 构建返回文本
         current_time = datetime.now().strftime("%y年%m月%d日 %H:%M")
@@ -55,35 +61,165 @@ class WeChatService:
             ""
         ]
         
+        current_year = datetime.now().year
+
+        def format_time(time_text: str) -> str:
+            if not time_text:
+                return ""
+
+            try:
+                dt = datetime.strptime(time_text, "%Y-%m-%d %H:%M:%S")
+                if dt.year != current_year:
+                    return dt.strftime("%y年%m月%d日 %H:%M")
+                return dt.strftime("%m月%d日 %H:%M")
+            except Exception:
+                return time_text
+
         # 按时间倒序处理记录（最新的在下面）
         for record in reversed(records):
             received_time = record.get('received_time', '')
+            sent_time = record.get('sent_time', '')
             received_msgs = record.get('received_messages', '')
             sent_msgs = record.get('sent_messages', '')
             is_read = record.get('is_read', 1)  # 默认已读
-            
-            # 提取日期部分（格式：2025-12-03 17:13:45 -> 12月03日 17:13）
-            time_str = ""
-            if received_time:
-                try:
-                    dt = datetime.strptime(received_time, "%Y-%m-%d %H:%M:%S")
-                    time_str = dt.strftime("%m月%d日 %H:%M")
-                except:
-                    time_str = received_time
-            
-            # 处理接收的消息（好友发送的）
+
+            entries = []
             if received_msgs:
-                # 如果未读，添加[未读,待回复]标记
+                received_label = f"[{format_time(received_time)}][{friend_name}]： {received_msgs}"
                 if is_read == 0:
-                    lines.append(f"[{time_str}][未读,待回复][{friend_name}]： {received_msgs}")
-                else:
-                    lines.append(f"[{time_str}][{friend_name}]： {received_msgs}")
-            
-            # 处理发送的消息（我发送的）
+                    received_label = f"[{format_time(received_time)}][未读,待回复][{friend_name}]： {received_msgs}"
+                entries.append((received_time or "", 0, received_label))
+
             if sent_msgs:
-                lines.append(f"[{time_str}][我]： {sent_msgs}")
+                entries.append((sent_time or "", 1, f"[{format_time(sent_time)}][我]： {sent_msgs}"))
+
+            # 同一条记录中优先按时间排序，时间相同时先展示收到的消息
+            entries.sort(key=lambda item: (item[0], item[1]))
+            for _, _, text in entries:
+                lines.append(text)
         
         return "\n".join(lines)
+
+
+class HermesAutoReplyService:
+    """定时轮询未读消息并调用 Hermes 自动回复"""
+
+    def __init__(
+        self,
+        db: Database,
+        wechat_service: WeChatService,
+        monitor_service: "MonitorService",
+        interval_seconds: int = 10, # 间隔30秒查一次最新消息
+        api_url: str = "http://172.20.19.87:8642/v1/responses",
+        api_key: str = "2cf7f73cd69db3d3961d8ad1ccd976a33e5b35bd5e9d95e4404219a1b87127fa",
+        model: str = "hermes-agent",
+        history_limit: int = 10, # 历史记录数
+        request_timeout: int = 600, # 超时
+    ):
+        self.db = db
+        self.wechat_service = wechat_service
+        self.monitor_service = monitor_service
+        self.interval_seconds = interval_seconds
+        self.api_url = api_url
+        self.api_key = api_key
+        self.model = model
+        self.history_limit = history_limit
+        self.request_timeout = request_timeout
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def start(self):
+        """启动轮询线程"""
+        if self._thread and self._thread.is_alive():
+            return
+
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="hermes-auto-reply")
+        self._thread.start()
+        print(f"✓ Hermes 自动回复轮询已启动，间隔 {self.interval_seconds} 秒")
+
+    def stop(self):
+        """停止轮询线程"""
+        self._stop_event.set()
+
+    def _run_loop(self):
+        while not self._stop_event.is_set():
+            try:
+                self.process_once()
+            except Exception as e:
+                print(f"✗ Hermes 自动回复轮询异常: {e}")
+
+            self._stop_event.wait(self.interval_seconds)
+
+    def process_once(self):
+        """执行一次轮询处理"""
+        for friend_name in self.monitor_service.get_monitor_list():
+            self._reply_friend(friend_name)
+
+    def _reply_friend(self, friend_name: str):
+        session_id = self._get_session_id(friend_name)
+        if not session_id:
+            return
+
+        history_text = self.wechat_service.get_chat_history(
+            friend_name,
+            self.history_limit,
+            require_unread=True,
+        )
+        if not history_text:
+            return
+
+        try:
+            reply_text = self._call_hermes_api(history_text, session_id)
+            self.db.mark_as_read(friend_name)
+            self.wechat_service.send_message(friend_name, [reply_text])
+            print(f"✓ Hermes 已回复 [{friend_name}]")
+        except Exception as e:
+            print(f"✗ Hermes 自动回复失败 [{friend_name}]: {e}")
+
+    def _get_session_id(self, friend_name: str) -> str:
+        config = self.monitor_service._load_config_from_json()
+        for item in config:
+            if item.get("monitor_friend_name") == friend_name:
+                friend_id = item.get("id")
+                return f"VV_{friend_id}" if friend_id is not None else ""
+        return ""
+
+    def _call_hermes_api(self, input_text: str, session_id: str) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "X-Hermes-Session-Id": session_id,
+        }
+        payload = {
+            "model": self.model,
+            "input": input_text,
+            "conversation": session_id,
+        }
+
+        response = requests.post(
+            self.api_url,
+            json=payload,
+            headers=headers,
+            timeout=self.request_timeout,
+        )
+        response.raise_for_status()
+
+        resp_json = response.json()
+        output = resp_json.get("output") or []
+        if not output:
+            raise ValueError(f"响应缺少 output: {resp_json}")
+
+        last_item = output[-1]
+        content = last_item.get("content") or []
+        if not content:
+            raise ValueError(f"响应缺少 content: {resp_json}")
+
+        text = content[0].get("text", "").strip()
+        if not text:
+            raise ValueError(f"响应缺少 text: {resp_json}")
+
+        return text
 
 
 class MonitorService:

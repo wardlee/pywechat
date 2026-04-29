@@ -74,7 +74,6 @@ def getMonitorList():
         return []
 
 
-def setMonitorList(*friends):
     """设置监听人列表"""
     try:
         url = f"{API_BASE_URL}/api/monitor/set"

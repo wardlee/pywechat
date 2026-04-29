@@ -18,15 +18,16 @@ from pydantic import BaseModel
 # 导入数据库
 from database import Database
 # 导入服务层
-from service import WeChatService, MonitorService
+from service import WeChatService, MonitorService, HermesAutoReplyService
 
 # ==================== 配置 ====================
 app = FastAPI(title="PyWeixin API", version="1.0.0")
 
 # 全局实例
-db = Database("wechat.db")
+db = Database(str(Path(__file__).with_name("wechat.db")))
 wechat_service = WeChatService(db)
 monitor_service = None
+hermes_auto_reply_service = None
 
 # ==================== 请求模型 ====================
 
@@ -43,11 +44,18 @@ async def startup_event():
     print("✓ 数据库初始化完成")
     
     # 启动监听服务（传入配置文件路径）
-    global monitor_service
+    global monitor_service, hermes_auto_reply_service
     config_path = os.path.join(os.path.dirname(__file__), "data_config.json")
     monitor_service = MonitorService(db, config_path)
     threading.Thread(target=monitor_service.start_monitoring, daemon=True).start()
     print("✓ 监听服务已启动（基于 JSON 配置）")
+
+    hermes_auto_reply_service = HermesAutoReplyService(
+        db=db,
+        wechat_service=wechat_service,
+        monitor_service=monitor_service,
+    )
+    hermes_auto_reply_service.start()
 
 
 @app.get("/")
