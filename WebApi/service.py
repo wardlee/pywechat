@@ -5,6 +5,7 @@
 import time
 import json
 import os
+import random
 import threading
 from typing import Any, List, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
@@ -21,19 +22,15 @@ class WeChatService:
     def __init__(self, db: Database):
         self.db = db
     
-    def send_message(self, friend_name: str, messages: List[str], save_to_db: bool = True):
+    def send_message(self, friend_name: str, messages: List[str]):
         """发送消息"""
         from pyweixin import Messages
         
-        # 发送消息
         Messages.send_messages_to_friend(
             friend=friend_name,
             messages=messages,
             close_weixin=False
         )
-        
-        if save_to_db:
-            self.db.save_sent_message(friend_name, messages)
     
     def get_latest_messages(self, friend_name: Optional[str] = None) -> List[Dict]:
         """获取最新消息并标记为已读"""
@@ -171,7 +168,7 @@ class OpenAIAutoReplyService:
 
             if reply_data["need_human"]:
                 review_message = self._build_human_review_message(friend_name, pending_messages, reply_data)
-                self.wechat_service.send_message(self.human_review_friend_name, [review_message], save_to_db=False)
+                self.wechat_service.send_message(self.human_review_friend_name, [review_message])
                 self.db.mark_as_read(friend_name)
                 print(f"⚠ OpenAI 需人工处理 [{friend_name}]: {reply_data['reason']}")
                 return
@@ -181,12 +178,18 @@ class OpenAIAutoReplyService:
                 print(f"✓ OpenAI 判断无需回复 [{friend_name}]: {reply_data['reason']}")
                 return
 
-            reply_text = reply_data["reply_text"]
-            self.wechat_service.send_message(friend_name, [reply_text])
+            self._send_auto_reply(friend_name, reply_data["reply_text"])
             self.db.mark_as_read(friend_name)
             print(f"✓ OpenAI 已回复 [{friend_name}]")
         except Exception as e:
             print(f"✗ OpenAI 自动回复失败 [{friend_name}]: {e}")
+
+    def _send_auto_reply(self, friend_name: str, reply_text: str):
+        parts = [part.strip() for part in reply_text.split("；") if part.strip()]
+        for index, part in enumerate(parts):
+            if index:
+                time.sleep(len(part) * 0.18 + random.uniform(2, 4))
+            self.wechat_service.send_message(friend_name, [part])
 
     def _build_chat_context(self, friend_name: str, require_unread: bool = False) -> Tuple[List[Dict[str, str]], str]:
         records = self.db.get_chat_history(friend_name, self.history_limit)
