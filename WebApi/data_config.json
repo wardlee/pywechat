@@ -12,18 +12,18 @@
     "friends": [
         {
             "monitor_friend_name": "佳霖",
-            "is_monitoring": true,
-            "Avatar": "A角色"
+            "is_monitoring": false,
+            "Avatar": "V哥"
         },
         {
             "monitor_friend_name": "黄坤容",
             "is_monitoring": false,
-            "Avatar": "B角色"
+            "Avatar": "V哥"
         },
         {
-            "monitor_friend_name": "PY杨梅",
-            "is_monitoring": false,
-            "Avatar": "B角色"
+            "monitor_friend_name": "晓D",
+            "is_monitoring": true,
+            "Avatar": "V哥"
         }
     ]
 }

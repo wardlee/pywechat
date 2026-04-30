@@ -227,16 +227,19 @@ class OpenAIAutoReplyService:
         with open(avatar_prompt_path, "r", encoding="utf-8") as f:
             system_prompt = f.read()
 
-        avatar_background = self._load_avatar_background(friend_name)
-        now = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
-        return (
-            system_prompt
-            .replace("{{friend_name}}", friend_name)
-            .replace("{{avatar_background}}", avatar_background)
-            .replace("{{current_time}}", now)
-            .replace("{{chat_history}}", "")
-            .strip()
-        )
+        return self._render_prompt_template(system_prompt, friend_name)
+
+    def _render_prompt_template(self, template: str, friend_name: str) -> str:
+        variables = {
+            "friend_name": friend_name,
+            "avatar_background": self._load_avatar_background(friend_name),
+            "current_time": datetime.now().strftime("%Y年%m月%d日 %H:%M:%S"),
+            "chat_history": "",
+        }
+
+        for key, value in variables.items():
+            template = template.replace(f"{{{{{key}}}}}", value)
+        return template.strip()
 
     def _build_human_review_message(self, friend_name: str, pending_messages: str, reply_data: Dict[str, Any]) -> str:
         suggested_reply = reply_data.get("suggested_reply") or "（AI 未提供建议回复）"
@@ -655,7 +658,7 @@ class MonitorService:
                         content = new_message.window_text()
 
                         # 过滤 与聊天无关的 关键字
-                        if content in ["语音通话通话时长","视频通话通话时长"] or content.strip() == "视频通话已取消" or content.strip() == "语音通话已取消"or content.strip() == "图片"or content.strip() == "动画表情" :
+                        if content in ["语音通话通话时长","视频通话通话时长","撤回了一条消息"] or content.strip() == "视频通话已取消" or content.strip() == "语音通话已取消"or content.strip() == "图片"or content.strip() == "动画表情" :
                             continue
                         
                         # 临时恢复窗口以进行判断
