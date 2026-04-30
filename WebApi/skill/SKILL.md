@@ -6,7 +6,6 @@
 
 1. 获取历史消息：`python wechat.py getHistoryData "<好友名称>" [条数]`
 2. 发送消息：`python wechat.py sendMsg "<好友名称>" "<消息内容>"`
-3. 获取监听列表：`python wechat.py getMonitorList`
 
 ## 使用规则
 
